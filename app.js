@@ -1,3 +1,5 @@
+JavaScript
+// Top of app.js (Line 1) - KEEP THIS ONE ONLY
 const API_BASE = '/api';
 
 let currentPage = 1;
