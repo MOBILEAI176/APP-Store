@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 let currentPage = 1;
 let currentCategory = 'ALL';
@@ -1002,7 +1002,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // Base API definition (Place at the very top of app.js)
-const API_BASE = '/api';
+
 
 // Overwrite loadStoreData (Lines ~340-420)
 async function loadStoreData() {
