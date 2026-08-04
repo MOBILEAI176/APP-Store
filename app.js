@@ -998,3 +998,32 @@ document.addEventListener('DOMContentLoaded', () => {
   setupProfileEditTriggers();
   setupProfileSaveLogic();
 });
+
+
+
+// Base API definition (Place at the very top of app.js)
+const API_BASE = '/api';
+
+// Overwrite loadStoreData (Lines ~340-420)
+async function loadStoreData() {
+    try {
+        const response = await fetch(`${API_BASE}/trending`);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const data = await response.json();
+        renderStoreSection(data);
+    } catch (error) {
+        console.error('Error loading store data:', error);
+    }
+}
+
+// Overwrite loadGamesSectionData (Lines ~710-790)
+async function loadGamesSectionData() {
+    try {
+        const response = await fetch(`${API_BASE}/apps?category=GAMES`);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const data = await response.json();
+        renderGamesSection(data.data || []);
+    } catch (error) {
+        console.error('Error loading games section:', error);
+    }
+}
