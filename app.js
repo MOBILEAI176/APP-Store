@@ -9,6 +9,12 @@ let currentLang = 'en';
 let carouselInterval = null;
 let currentSlideIndex = 0;
 
+let gamesCurrentPage = 1;
+let gamesCurrentCategory = 'ALL';
+let gamesIsLoading = false;
+let gamesHasMore = true;
+let isGamesExpandedView = false;
+
 const translations = {
   en: {
     today: 'Today',
@@ -37,16 +43,20 @@ const availableLanguages = [
   { code: 'hi', label: 'हिन्दी (Hindi)' }
 ];
 
+// DOM Element Declarations
 let pageTitle, headerDate, navItems, viewSections;
 let headerUserAvatar, profileBtn, profileModal, profileClose;
 let modalUserAvatar, modalUserName, modalUserEmail, modalUserStatus, themeToggle, languageSelect;
 let todayHeroStack, todayEventsStack, editorialFavsStack, todayList, seeAllToday;
 let mustHaveAppsGrid, editorsChoiceGrid, happeningNowStack, summertimeEssentialsGrid, topGamesGrid;
 let heroCarouselTrack, carouselIndicators;
-let searchInput, searchResults;
+let searchInput, searchResults, searchClearBtn, searchDiscoverSection;
 let appsMainContainer, appsExpandedContainer, appsExpandedList, expandedCategoryTitle, btnBackToApps, loadingSpinner;
+let editUserName, editUserEmail, avatarFileInput, btnSaveProfile;
 
+// Master DOMContentLoaded Initialization
 document.addEventListener('DOMContentLoaded', () => {
+  // Query Core DOM Elements
   pageTitle = document.getElementById('pageTitle');
   headerDate = document.getElementById('headerDate');
   navItems = document.querySelectorAll('.nav-item');
@@ -64,6 +74,11 @@ document.addEventListener('DOMContentLoaded', () => {
   themeToggle = document.getElementById('themeToggle');
   languageSelect = document.getElementById('languageSelect');
 
+  editUserName = document.getElementById('editUserName');
+  editUserEmail = document.getElementById('editUserEmail');
+  avatarFileInput = document.getElementById('avatarFileInput');
+  btnSaveProfile = document.getElementById('btnSaveProfile');
+
   todayHeroStack = document.getElementById('todayHeroStack');
   todayEventsStack = document.getElementById('todayEventsStack');
   editorialFavsStack = document.getElementById('editorialFavsStack');
@@ -80,6 +95,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   searchInput = document.getElementById('searchInput');
   searchResults = document.getElementById('searchResults');
+  searchClearBtn = document.getElementById('searchClearBtn');
+  searchDiscoverSection = document.getElementById('searchDiscoverSection');
 
   // Expanded View Elements
   appsMainContainer = document.getElementById('appsMainContainer');
@@ -93,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     headerDate.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   }
 
-  // Bottom Navigation Handling
+  // Navigation Event Handling
   navItems.forEach(item => {
     item.addEventListener('click', () => {
       const tabName = item.getAttribute('data-tab');
@@ -130,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Category Expand / "See All" Buttons
+  // Category Expand Buttons
   document.querySelectorAll('.category-expand-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const category = btn.getAttribute('data-category');
@@ -140,35 +157,73 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnBackToApps?.addEventListener('click', closeExpandedCategory);
 
-  // Dynamic Scroll Listener for Infinite Pagination
-  window.addEventListener('scroll', handleInfiniteScroll);
+  // Games Tab Event Handlers
+  const gamesPills = document.querySelectorAll('#gamesCategoryPills .pill');
+  gamesPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      gamesPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
 
+      const cat = pill.getAttribute('data-cat');
+      if (cat === 'ALL') {
+        closeGamesExpandedCategory();
+      } else {
+        openGamesCategoryView(cat, pill.innerText.trim());
+      }
+    });
+  });
+
+  document.querySelectorAll('#viewGames .category-expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const category = btn.getAttribute('data-category');
+      openGamesCategoryView(category, category);
+    });
+  });
+
+  document.getElementById('btnBackToGames')?.addEventListener('click', closeGamesExpandedCategory);
+
+  // Search Listeners
   if (searchInput) {
     searchInput.addEventListener('input', debounce(async (e) => {
       const query = e.target.value.trim();
-      if (!query) {
-        if (searchResults) searchResults.innerHTML = '';
-        return;
-      }
-      try {
-        const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
-        const results = await res.json();
-        if (searchResults) {
-          searchResults.innerHTML = '';
-          if (Array.isArray(results)) {
-            results.forEach(app => searchResults.appendChild(createAppCard(app)));
-          }
-        }
-      } catch (err) {
-        console.error('Search error:', err);
-      }
+      toggleSearchState(query);
+      if (!query) return;
+
+      await executeSearch(query);
     }));
   }
 
+  searchClearBtn?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    toggleSearchState('');
+  });
+
+  document.querySelectorAll('.trending-tag').forEach(tag => {
+    tag.addEventListener('click', () => {
+      const q = tag.getAttribute('data-query');
+      if (searchInput && q) {
+        searchInput.value = q;
+        toggleSearchState(q);
+        executeSearch(q);
+      }
+    });
+  });
+
+  // Scroll Listeners for Infinite Scroll
+  window.addEventListener('scroll', () => {
+    handleInfiniteScroll();
+    handleGamesInfiniteScroll();
+  });
+
+  // App Startup Executions
   initLanguageOptions();
   loadUserProfile();
-  loadStoreData();
   setupModalListeners();
+  setupProfileEditTriggers();
+  setupProfileSaveLogic();
+  
+  loadStoreData();
+  loadGamesSectionData();
 });
 
 // Category Expand & Pagination Logic
@@ -206,6 +261,7 @@ function handleInfiniteScroll() {
   }
 }
 
+// UI Rendering Helper Functions
 function createAppCard(app) {
   const card = document.createElement('div');
   card.className = 'app-card';
@@ -343,10 +399,18 @@ function createHappeningCard(app, tagText, titleText) {
   return card;
 }
 
+function renderAppGrid(elementId, items) {
+  const container = document.getElementById(elementId);
+  if (!container) return;
+  container.innerHTML = '';
+  items.forEach(item => container.appendChild(createAppCard(item)));
+}
+
+// Data Fetching Functions
 async function loadStoreData() {
   try {
     const res = await fetch(`${API_BASE}/trending`);
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('Network response failed');
     const apps = await res.json();
     
     if (!Array.isArray(apps) || apps.length === 0) return;
@@ -415,6 +479,8 @@ async function loadStoreData() {
 async function openAppDetail(appId) {
   const overlay = document.getElementById('modal-overlay');
   const container = document.getElementById('app-modal-container');
+
+  if (!overlay || !container) return;
 
   overlay.classList.add('active');
   container.innerHTML = '<div style="padding: 40px; text-align: center; color: #fff;">Loading store details...</div>';
@@ -488,6 +554,7 @@ function closeAppModal() {
   document.getElementById('modal-overlay')?.classList.remove('active');
 }
 
+// Language and Internationalization
 function initLanguageOptions() {
   if (!languageSelect) return;
   languageSelect.innerHTML = '';
@@ -508,21 +575,17 @@ function switchLanguage(lang) {
   if (pageTitle) pageTitle.textContent = dict[activeTab] || dict.today;
 }
 
-async function loadUserProfile() {
-  try {
-    const res = await fetch(`${API_BASE}/user/profile`);
-    if (!res.ok) return;
-    const user = await res.json();
-    if (user && user.email) {
-      if (headerUserAvatar) headerUserAvatar.src = user.avatar;
-      if (modalUserAvatar) modalUserAvatar.src = user.avatar;
-      if (modalUserName) modalUserName.textContent = user.name;
-      if (modalUserEmail) modalUserEmail.textContent = user.email;
-      if (modalUserStatus) modalUserStatus.textContent = user.status;
-    }
-  } catch (err) {
-    console.error('Error loading profile:', err);
-  }
+// User Profile & Modal Event Handlers
+function loadUserProfile() {
+  const savedUser = JSON.parse(localStorage.getItem('user_profile') || '{}');
+  const name = savedUser.name || 'Alex Developer';
+  const email = savedUser.email || 'alex.dev@apple.com';
+  const avatar = savedUser.avatar || 'https://ui-avatars.com/api/?name=Alex+Developer&size=80&background=0A84FF&color=fff';
+
+  if (headerUserAvatar) headerUserAvatar.src = avatar;
+  if (modalUserAvatar) modalUserAvatar.src = avatar;
+  if (editUserName) editUserName.value = name;
+  if (editUserEmail) editUserEmail.value = email;
 }
 
 function setupModalListeners() {
@@ -539,6 +602,57 @@ function setupModalListeners() {
   });
 }
 
+function setupProfileEditTriggers() {
+  const editTriggers = document.querySelectorAll('#profileBtn, .edit-pen-btn, .edit-icon, #editPenBtn');
+
+  editTriggers.forEach(trigger => {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openProfileModal();
+    });
+  });
+}
+
+function openProfileModal() {
+  const savedUser = JSON.parse(localStorage.getItem('user_profile') || '{}');
+  
+  if (editUserName) editUserName.value = savedUser.name || 'Alex Developer';
+  if (editUserEmail) editUserEmail.value = savedUser.email || 'alex.dev@apple.com';
+  if (modalUserAvatar) modalUserAvatar.src = savedUser.avatar || 'https://ui-avatars.com/api/?name=Alex+Developer&size=80&background=0A84FF&color=fff';
+
+  profileModal?.classList.add('active');
+}
+
+function setupProfileSaveLogic() {
+  avatarFileInput?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        if (modalUserAvatar) modalUserAvatar.src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+
+  btnSaveProfile?.addEventListener('click', () => {
+    const updatedName = editUserName?.value.trim() || 'User';
+    const updatedEmail = editUserEmail?.value.trim() || 'user@example.com';
+    const updatedAvatar = modalUserAvatar?.src;
+
+    if (headerUserAvatar) headerUserAvatar.src = updatedAvatar;
+
+    localStorage.setItem('user_profile', JSON.stringify({
+      name: updatedName,
+      email: updatedEmail,
+      avatar: updatedAvatar
+    }));
+
+    profileModal?.classList.remove('active');
+  });
+}
+
+// Utility Helpers
 function handleDirectGet(appId) {
   if (!appId) return;
   window.open(`https://play.google.com/store/apps/details?id=${appId}`, '_blank');
@@ -557,6 +671,33 @@ function debounce(func, delay = 350) {
   };
 }
 
+// Search Functionality
+function toggleSearchState(query) {
+  if (searchClearBtn) searchClearBtn.style.display = query ? 'flex' : 'none';
+  if (searchDiscoverSection) searchDiscoverSection.style.display = query ? 'none' : 'block';
+  if (searchResults && !query) searchResults.innerHTML = '';
+}
+
+async function executeSearch(query) {
+  if (!searchResults) return;
+  searchResults.innerHTML = '<div style="color: var(--text-secondary); grid-column: 1/-1; text-align: center; padding: 30px;">Searching App Store...</div>';
+  
+  try {
+    const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+    const results = await res.json();
+    searchResults.innerHTML = '';
+    
+    if (Array.isArray(results) && results.length > 0) {
+      results.forEach(app => searchResults.appendChild(createAppCard(app)));
+    } else {
+      searchResults.innerHTML = '<div style="color: var(--text-secondary); grid-column: 1/-1; text-align: center; padding: 30px;">No results found.</div>';
+    }
+  } catch (err) {
+    console.error('Search error:', err);
+  }
+}
+
+// Category Pagination Logic
 async function fetchCategoryApps() {
   if (isLoading || !hasMore) return;
   isLoading = true;
@@ -567,15 +708,7 @@ async function fetchCategoryApps() {
     if (!res.ok) throw new Error('Failed to load category apps');
 
     const responseData = await res.json();
-
-    let apps = [];
-    if (Array.isArray(responseData)) {
-      apps = responseData;
-    } else if (Array.isArray(responseData.apps)) {
-      apps = responseData.apps;
-    } else if (Array.isArray(responseData.data)) {
-      apps = responseData.data;
-    }
+    const apps = Array.isArray(responseData) ? responseData : (responseData.apps || responseData.data || []);
 
     if (!appsExpandedList) return;
 
@@ -605,58 +738,33 @@ async function fetchCategoryApps() {
   }
 }
 
-let gamesCurrentPage = 1;
-let gamesCurrentCategory = 'ALL';
-let gamesIsLoading = false;
-let gamesHasMore = true;
-let isGamesExpandedView = false;
-
-document.addEventListener('DOMContentLoaded', () => {
-  const gamesPills = document.querySelectorAll('#gamesCategoryPills .pill');
-  gamesPills.forEach(pill => {
-    pill.addEventListener('click', () => {
-      gamesPills.forEach(p => p.classList.remove('active'));
-      pill.classList.add('active');
-
-      const cat = pill.getAttribute('data-cat');
-      if (cat === 'ALL') {
-        closeGamesExpandedCategory();
-      } else {
-        openGamesCategoryView(cat, pill.innerText.trim());
-      }
-    });
-  });
-
-  document.querySelectorAll('#viewGames .category-expand-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const category = btn.getAttribute('data-category');
-      openGamesCategoryView(category, category);
-    });
-  });
-
-  document.getElementById('btnBackToGames')?.addEventListener('click', closeGamesExpandedCategory);
-  window.addEventListener('scroll', handleGamesInfiniteScroll);
-  loadGamesSectionData();
-});
-
+// Games Section Specific Logic
 function openGamesCategoryView(categoryKey, displayTitle) {
   gamesCurrentCategory = categoryKey;
   gamesCurrentPage = 1;
   gamesHasMore = true;
   isGamesExpandedView = true;
 
-  document.getElementById('gamesMainContainer').style.display = 'none';
-  document.getElementById('gamesExpandedContainer').style.display = 'block';
-  document.getElementById('expandedGamesCategoryTitle').textContent = displayTitle;
-  document.getElementById('gamesExpandedList').innerHTML = '';
+  const mainWin = document.getElementById('gamesMainContainer');
+  const expWin = document.getElementById('gamesExpandedContainer');
+  const title = document.getElementById('expandedGamesCategoryTitle');
+  const list = document.getElementById('gamesExpandedList');
+
+  if (mainWin) mainWin.style.display = 'none';
+  if (expWin) expWin.style.display = 'block';
+  if (title) title.textContent = displayTitle;
+  if (list) list.innerHTML = '';
 
   fetchGamesCategoryApps();
 }
 
 function closeGamesExpandedCategory() {
   isGamesExpandedView = false;
-  document.getElementById('gamesMainContainer').style.display = 'block';
-  document.getElementById('gamesExpandedContainer').style.display = 'none';
+  const mainWin = document.getElementById('gamesMainContainer');
+  const expWin = document.getElementById('gamesExpandedContainer');
+
+  if (mainWin) mainWin.style.display = 'block';
+  if (expWin) expWin.style.display = 'none';
 
   const pills = document.querySelectorAll('#gamesCategoryPills .pill');
   pills.forEach(p => p.classList.toggle('active', p.getAttribute('data-cat') === 'ALL'));
@@ -711,12 +819,12 @@ function handleGamesInfiniteScroll() {
 
 async function loadGamesSectionData() {
   try {
-    const res = await fetch(`${API_BASE}/trending`);
+    const res = await fetch(`${API_BASE}/apps?category=GAMES`);
     if (!res.ok) return;
     const items = await res.json();
-    if (!Array.isArray(items) || items.length === 0) return;
+    const games = Array.isArray(items) ? items : (items.data || items.apps || []);
 
-    const games = items;
+    if (!Array.isArray(games) || games.length === 0) return;
 
     const heroSpotlight = document.getElementById('gamesHeroSpotlight');
     if (heroSpotlight && games[0]) {
@@ -782,248 +890,4 @@ async function loadGamesSectionData() {
   } catch (err) {
     console.error('Error loading games section:', err);
   }
-}
-
-function renderAppGrid(elementId, items) {
-  const container = document.getElementById(elementId);
-  if (!container) return;
-  container.innerHTML = '';
-  items.forEach(item => container.appendChild(createAppCard(item)));
-}
-
-
-
-
-// Load saved user profile on application startup
-function loadUserProfile() {
-  const savedUser = JSON.parse(localStorage.getItem('user_profile') || '{}');
-  const name = savedUser.name || 'Alex Developer';
-  const email = savedUser.email || 'alex.dev@apple.com';
-  const avatar = savedUser.avatar || 'https://ui-avatars.com/api/?name=Alex+Developer&size=80&background=0A84FF&color=fff';
-
-  if (headerUserAvatar) headerUserAvatar.src = avatar;
-  if (modalUserAvatar) modalUserAvatar.src = avatar;
-  if (editUserName) editUserName.value = name;
-  if (editUserEmail) editUserEmail.value = email;
-}
-
-// Setup Event Listeners for Profile Editing & Device File Upload
-function setupModalListeners() {
-  profileBtn?.addEventListener('click', () => profileModal?.classList.add('active'));
-  profileClose?.addEventListener('click', () => profileModal?.classList.remove('active'));
-
-  // Handle local image file upload from device
-  avatarFileInput?.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = function(evt) {
-        if (modalUserAvatar) modalUserAvatar.src = evt.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-  });
-
-  // Save changes to localStorage and update app header
-  btnSaveProfile?.addEventListener('click', () => {
-    const updatedName = editUserName?.value.trim() || 'User';
-    const updatedEmail = editUserEmail?.value.trim() || 'user@example.com';
-    const updatedAvatar = modalUserAvatar?.src;
-
-    if (headerUserAvatar) headerUserAvatar.src = updatedAvatar;
-
-    localStorage.setItem('user_profile', JSON.stringify({
-      name: updatedName,
-      email: updatedEmail,
-      avatar: updatedAvatar
-    }));
-
-    profileModal?.classList.remove('active');
-  });
-
-  // Theme toggle setting listener
-  themeToggle?.addEventListener('change', (e) => {
-    document.body.classList.toggle('light-theme', !e.target.checked);
-    document.body.classList.toggle('dark-theme', e.target.checked);
-  });
-}
-
-
-
-// Toggle search state depending on whether text is present
-function toggleSearchState(query) {
-  if (searchClearBtn) searchClearBtn.style.display = query ? 'flex' : 'none';
-  if (searchDiscoverSection) searchDiscoverSection.style.display = query ? 'none' : 'block';
-  if (searchResults && !query) searchResults.innerHTML = '';
-}
-
-// Fetch search results from backend API
-async function executeSearch(query) {
-  if (!searchResults) return;
-  searchResults.innerHTML = '<div style="color: var(--text-secondary); grid-column: 1/-1; text-align: center; padding: 30px;">Searching App Store...</div>';
-  
-  try {
-    const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
-    const results = await res.json();
-    searchResults.innerHTML = '';
-    
-    if (Array.isArray(results) && results.length > 0) {
-      results.forEach(app => searchResults.appendChild(createAppCard(app)));
-    } else {
-      searchResults.innerHTML = '<div style="color: var(--text-secondary); grid-column: 1/-1; text-align: center; padding: 30px;">No results found.</div>';
-    }
-  } catch (err) {
-    console.error('Search error:', err);
-  }
-}
-
-// Debounce helper to prevent excessive API requests
-function debounce(func, delay = 350) {
-  let timeout;
-  return (...args) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(this, args), delay);
-  };
-}
-
-// Attach Search Handlers inside DOMContentLoaded
-if (searchInput) {
-  searchInput.addEventListener('input', debounce(async (e) => {
-    const query = e.target.value.trim();
-    toggleSearchState(query);
-    if (!query) return;
-
-    await executeSearch(query);
-  }));
-}
-
-searchClearBtn?.addEventListener('click', () => {
-  if (searchInput) searchInput.value = '';
-  toggleSearchState('');
-});
-
-// Trending Search Tag Click Listener
-document.querySelectorAll('.trending-tag').forEach(tag => {
-  tag.addEventListener('click', () => {
-    const q = tag.getAttribute('data-query');
-    if (searchInput && q) {
-      searchInput.value = q;
-      toggleSearchState(q);
-      executeSearch(q);
-    }
-  });
-});
-
-
-// Attach event listeners to Profile Button and all Edit Pen Icons
-function setupProfileEditTriggers() {
-  const profileModal = document.getElementById('profileModal');
-  const profileClose = document.getElementById('profileClose');
-
-  // Select any button or icon intended for editing (e.g., pen icons)
-  const editTriggers = document.querySelectorAll('#profileBtn, .edit-pen-btn, .edit-icon, #editPenBtn');
-
-  // Open modal on clicking avatar OR any edit pen button
-  editTriggers.forEach(trigger => {
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openProfileModal();
-    });
-  });
-
-  // Close modal listener
-  profileClose?.addEventListener('click', () => {
-    profileModal?.classList.remove('active');
-  });
-}
-
-// Function to open modal and pre-fill existing user data
-function openProfileModal() {
-  const profileModal = document.getElementById('profileModal');
-  const modalUserAvatar = document.getElementById('modalUserAvatar');
-  const editUserName = document.getElementById('editUserName');
-  const editUserEmail = document.getElementById('editUserEmail');
-
-  const savedUser = JSON.parse(localStorage.getItem('user_profile') || '{}');
-  
-  if (editUserName) editUserName.value = savedUser.name || 'Alex Developer';
-  if (editUserEmail) editUserEmail.value = savedUser.email || 'alex.dev@apple.com';
-  if (modalUserAvatar) modalUserAvatar.src = savedUser.avatar || 'https://ui-avatars.com/api/?name=Alex+Developer&size=80&background=0A84FF&color=fff';
-
-  profileModal?.classList.add('active');
-}
-
-// Local Avatar Upload & Save Handler
-function setupProfileSaveLogic() {
-  const avatarFileInput = document.getElementById('avatarFileInput');
-  const modalUserAvatar = document.getElementById('modalUserAvatar');
-  const headerUserAvatar = document.getElementById('headerUserAvatar');
-  const editUserName = document.getElementById('editUserName');
-  const editUserEmail = document.getElementById('editUserEmail');
-  const btnSaveProfile = document.getElementById('btnSaveProfile');
-  const profileModal = document.getElementById('profileModal');
-
-  // Local device file upload handler
-  avatarFileInput?.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = function(evt) {
-        if (modalUserAvatar) modalUserAvatar.src = evt.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-  });
-
-  // Save updated details to localStorage
-  btnSaveProfile?.addEventListener('click', () => {
-    const updatedName = editUserName?.value.trim() || 'User';
-    const updatedEmail = editUserEmail?.value.trim() || 'user@example.com';
-    const updatedAvatar = modalUserAvatar?.src;
-
-    if (headerUserAvatar) headerUserAvatar.src = updatedAvatar;
-
-    localStorage.setItem('user_profile', JSON.stringify({
-      name: updatedName,
-      email: updatedEmail,
-      avatar: updatedAvatar
-    }));
-
-    profileModal?.classList.remove('active');
-  });
-}
-
-// Initialize handlers once DOM content is fully loaded
-document.addEventListener('DOMContentLoaded', () => {
-  setupProfileEditTriggers();
-  setupProfileSaveLogic();
-});
-
-
-
-// Base API definition (Place at the very top of app.js)
-
-
-// Overwrite loadStoreData (Lines ~340-420)
-async function loadStoreData() {
-    try {
-        const response = await fetch(`${API_BASE}/trending`);
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        renderStoreSection(data);
-    } catch (error) {
-        console.error('Error loading store data:', error);
-    }
-}
-
-// Overwrite loadGamesSectionData (Lines ~710-790)
-async function loadGamesSectionData() {
-    try {
-        const response = await fetch(`${API_BASE}/apps?category=GAMES`);
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        renderGamesSection(data.data || []);
-    } catch (error) {
-        console.error('Error loading games section:', error);
-    }
 }
