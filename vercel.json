@@ -2,8 +2,16 @@
   "version": 2,
   "builds": [
     {
-      "src": "app_4.py",
+      "src": "app.py",
       "use": "@vercel/python"
+    },
+    {
+      "src": "*.css",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "*.js",
+      "use": "@vercel/static"
     },
     {
       "src": "index.html",
@@ -16,8 +24,16 @@
       "dest": "app_4.py"
     },
     {
+      "src": "/styles.css",
+      "dest": "/styles.css"
+    },
+    {
+      "src": "/app.js",
+      "dest": "/app.js"
+    },
+    {
       "src": "/(.*)",
-      "dest": "/$1"
+      "dest": "/index.html"
     }
   ]
 }
