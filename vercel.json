@@ -21,7 +21,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "app_4.py"
+      "dest": "app.py"
     },
     {
       "src": "/styles.css",
